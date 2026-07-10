@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ProjectState, AiCommandPlan, DeviceMode } from '@/types/project';
+import { applyAiPlan } from '@/lib/applyActions';
 
 type Props = {
   projectId: string;
@@ -34,12 +35,15 @@ export function ProjectEditor({ projectId, initialState, initialMode, onSave }: 
   const [prompt, setPrompt] = useState('');
   const [plan, setPlan] = useState<AiCommandPlan | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const modules = useMemo<ModuleFlags>(() => {
     const settings = state.settings as any;
     return settings?.modules || {};
   }, [state.settings]);
+
+  const moduleIsActive = (value: boolean | undefined) => value !== false;
 
   const buildingCount = state.buildings?.length || 0;
   const gridCount = state.columnGrids?.length || 0;
@@ -79,12 +83,48 @@ export function ProjectEditor({ projectId, initialState, initialMode, onSave }: 
 
   const saveProjectNote = async () => {
     setMessage(null);
+    setSaving(true);
 
     try {
       await onSave(state, 'Proje kontrol merkezi kaydı', null, state);
       setMessage('Proje kaydı güncellendi.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Kayıt sırasında hata oluştu.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const applyPlanToProject = async () => {
+    if (!plan) return;
+
+    setMessage(null);
+    setSaving(true);
+
+    try {
+      const beforeState = state;
+      const nextState = applyAiPlan(beforeState, plan);
+
+      setState(nextState);
+      setPlan(null);
+      setPrompt('');
+
+      await onSave(
+        nextState,
+        `AI komutu uygulandı: ${plan.summary}`,
+        plan,
+        beforeState
+      );
+
+      setMessage('AI işlem planı projeye uygulandı ve veritabanına kaydedildi.');
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : 'AI işlem planı uygulanırken hata oluştu.'
+      );
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -116,8 +156,8 @@ export function ProjectEditor({ projectId, initialState, initialMode, onSave }: 
                 Projeler
               </Link>
 
-              <button className="btn primary" onClick={saveProjectNote}>
-                Kaydet
+              <button className="btn primary" onClick={saveProjectNote} disabled={saving}>
+                {saving ? 'Kaydediliyor...' : 'Kaydet'}
               </button>
             </div>
           </div>
@@ -239,13 +279,13 @@ export function ProjectEditor({ projectId, initialState, initialMode, onSave }: 
                   key={String(label)}
                   className="notice"
                   style={{
-                    borderColor: active ? '#b7d9c5' : '#efcbc7',
-                    background: active ? '#f0fbf4' : '#fff4f2'
+                    borderColor: moduleIsActive(active as boolean | undefined) ? '#b7d9c5' : '#efcbc7',
+                    background: moduleIsActive(active as boolean | undefined) ? '#f0fbf4' : '#fff4f2'
                   }}
                 >
                   <b>{label as string}</b>
                   <br />
-                  {active ? 'Aktif' : 'Kapalı'}
+                  {moduleIsActive(active as boolean | undefined) ? 'Aktif' : 'Kapalı'}
                 </div>
               ))}
             </div>
@@ -257,8 +297,7 @@ export function ProjectEditor({ projectId, initialState, initialMode, onSave }: 
 
             <p>
               AI burada kaynak kodu değiştirmez. Sadece proje verisine uygulanabilecek güvenli
-              işlem planı üretir. Uygulama aşaması bir sonraki geliştirme paketinde kontrollü
-              hale getirilecek.
+              işlem planı üretir. Onay verdiğinde işlem proje verisine uygulanır ve veritabanına kaydedilir.
             </p>
 
             <div className="form-grid" style={{ marginTop: 16 }}>
@@ -267,7 +306,7 @@ export function ProjectEditor({ projectId, initialState, initialMode, onSave }: 
                 <textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Örn: B12 kolonuna forklift hız sınırı 10 km/h levhası ekle."
+                  placeholder="Örn: 12 metre uzunluğunda makine ekle. / B12 kolonuna forklift hız sınırı 10 km/h levhası ekle."
                 />
               </div>
 
@@ -275,13 +314,13 @@ export function ProjectEditor({ projectId, initialState, initialMode, onSave }: 
                 <button
                   className="btn primary"
                   onClick={askAi}
-                  disabled={aiBusy || !modules.ai}
+                  disabled={aiBusy || !moduleIsActive(modules.ai)}
                 >
                   {aiBusy ? 'Plan hazırlanıyor...' : 'İşlem Planı Hazırla'}
                 </button>
               </div>
 
-              {!modules.ai && (
+              {!moduleIsActive(modules.ai) && (
                 <div className="notice warn">
                   Bu projede AI modülü kapalı. Yeni proje sihirbazından AI modülü açık
                   proje oluşturulmalı.
@@ -309,9 +348,23 @@ export function ProjectEditor({ projectId, initialState, initialMode, onSave }: 
                     </div>
                   ))}
 
-                  <div className="notice" style={{ marginTop: 12 }}>
-                    Bu aşamada plan sadece görüntülenir. Sonraki pakette “Onayla ve uygula”
-                    sistemi proje veritabanına güvenli şekilde bağlanacak.
+                  <div className="actions" style={{ marginTop: 12 }}>
+                    <button
+                      className="btn accent"
+                      onClick={applyPlanToProject}
+                      disabled={saving}
+                    >
+                      {saving ? 'Uygulanıyor...' : 'Onayla ve Projeye Uygula'}
+                    </button>
+
+                    <button className="btn" onClick={() => setPlan(null)} disabled={saving}>
+                      İptal
+                    </button>
+                  </div>
+
+                  <div className="notice warn" style={{ marginTop: 12 }}>
+                    Bu işlem kaynak kodu değiştirmez. Sadece mevcut proje verisini günceller,
+                    değişiklik geçmişine ve yedek kayıtlarına işler.
                   </div>
                 </div>
               )}
