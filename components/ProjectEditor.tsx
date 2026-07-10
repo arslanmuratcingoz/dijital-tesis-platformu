@@ -1,190 +1,355 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { ProjectState, AiCommandPlan, DeviceMode } from '@/types/project';
-import { assetPresets } from '@/lib/projectDefaults';
-import { uid } from '@/lib/utils';
-import { ThreeScene } from '@/components/ThreeScene';
-import { applyAiPlan } from '@/lib/applyActions';
 
 type Props = {
   projectId: string;
   initialState: ProjectState;
   initialMode: DeviceMode;
-  onSave: (state: ProjectState, changeLabel?: string, aiPlan?: AiCommandPlan | null, beforeState?: ProjectState) => Promise<void>;
+  onSave: (
+    state: ProjectState,
+    changeLabel?: string,
+    aiPlan?: AiCommandPlan | null,
+    beforeState?: ProjectState
+  ) => Promise<void>;
+};
+
+type ModuleFlags = {
+  inventory?: boolean;
+  signs?: boolean;
+  fire?: boolean;
+  measurement?: boolean;
+  ai?: boolean;
+  mobile?: boolean;
 };
 
 export function ProjectEditor({ projectId, initialState, initialMode, onSave }: Props) {
-  const [state, setState] = useState<ProjectState>({ ...initialState, deviceMode: initialMode });
-  const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [state, setState] = useState<ProjectState>({
+    ...initialState,
+    deviceMode: initialMode
+  });
+
   const [prompt, setPrompt] = useState('');
   const [plan, setPlan] = useState<AiCommandPlan | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const selected = useMemo(() => state.assets.find((a) => a.id === selectedAsset), [state.assets, selectedAsset]);
+  const modules = useMemo<ModuleFlags>(() => {
+    const settings = state.settings as any;
+    return settings?.modules || {};
+  }, [state.settings]);
 
-  const save = async (label = 'Manuel kayıt', customState = state, aiPlan: AiCommandPlan | null = null, beforeState?: ProjectState) => {
-    setSaving(true); setMessage(null);
-    try { await onSave(customState, label, aiPlan, beforeState); setMessage('Kaydedildi.'); }
-    catch (e) { setMessage(e instanceof Error ? e.message : 'Kayıt sırasında hata oluştu.'); }
-    finally { setSaving(false); }
-  };
+  const buildingCount = state.buildings?.length || 0;
+  const gridCount = state.columnGrids?.length || 0;
+  const assetCount = state.assets?.length || 0;
+  const layerCount = state.layers?.length || 0;
 
-  const addPreset = (preset: typeof assetPresets[number]) => {
-    const index = state.assets.length;
-    setState((prev) => ({
-      ...prev,
-      assets: [...prev.assets, {
-        id: uid('asset'), category: preset.category, name: preset.label,
-        x: (index % 6) * 4 - 10, z: Math.floor(index / 6) * 4 - 10, y: 0,
-        width: preset.width, depth: preset.depth, height: preset.height,
-        color: preset.color, layerId: preset.layerId, rotation: 0
-      }]
-    }));
-  };
-
-  const addBuilding = () => {
-    setState((prev) => ({ ...prev, buildings: [...prev.buildings, {
-      id: uid('bld'), name: 'Yeni Bina', x: 0, z: 0, width: 60, depth: 100, height: 12,
-      wallColor: '#d7dde5', roofColor: '#9ca8b6', opacity: .58, layerId: 'buildings'
-    }] }));
-  };
-
-  const addGrid = () => {
-    setState((prev) => ({ ...prev, columnGrids: [...prev.columnGrids, {
-      id: uid('grid'), name: 'Kolon Izgarası', originX: -30, originZ: -45, rows: ['A', 'B', 'C', 'D'], columns: 16,
-      rowSpacing: 20, columnSpacing: 8, columnWidth: .7, columnHeight: 10, visible: true
-    }] }));
-  };
-
-  const toggleLayer = (id: string) => setState((prev) => ({ ...prev, layers: prev.layers.map((l) => l.id === id ? { ...l, visible: !l.visible } : l) }));
+  const firstBuilding = state.buildings?.[0];
+  const firstGrid = state.columnGrids?.[0];
 
   const askAi = async () => {
     if (!prompt.trim()) return;
-    setAiBusy(true); setPlan(null); setMessage(null);
+
+    setAiBusy(true);
+    setPlan(null);
+    setMessage(null);
+
     try {
       const res = await fetch('/api/ai/plan', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId, prompt, projectState: state })
       });
+
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'AI planı alınamadı.');
+
+      if (!res.ok) {
+        throw new Error(data.error || 'AI işlem planı alınamadı.');
+      }
+
       setPlan(data.plan);
-    } catch (e) { setMessage(e instanceof Error ? e.message : 'AI planı sırasında hata oluştu.'); }
-    finally { setAiBusy(false); }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'AI planı sırasında hata oluştu.');
+    } finally {
+      setAiBusy(false);
+    }
   };
 
-  const applyPlan = async () => {
-    if (!plan) return;
-    const before = state;
-    const next = applyAiPlan(before, plan);
-    setState(next);
-    setPlan(null); setPrompt('');
-    await save(`AI komutu: ${plan.summary}`, next, plan, before);
-  };
+  const saveProjectNote = async () => {
+    setMessage(null);
 
-  const updateSelected = (patch: Record<string, number | string>) => {
-    if (!selectedAsset) return;
-    setState((prev) => ({ ...prev, assets: prev.assets.map((a) => a.id === selectedAsset ? { ...a, ...patch } : a) }));
-  };
-
-  const deleteSelected = () => {
-    if (!selectedAsset) return;
-    setState((prev) => ({ ...prev, assets: prev.assets.filter((a) => a.id !== selectedAsset) }));
-    setSelectedAsset(null);
+    try {
+      await onSave(state, 'Proje kontrol merkezi kaydı', null, state);
+      setMessage('Proje kaydı güncellendi.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Kayıt sırasında hata oluştu.');
+    }
   };
 
   return (
-    <div className="editor">
-      <aside className="editor-left">
-        <div className="editor-header"><div><div className="editor-title">Araçlar</div><div className="editor-sub">Proje: {state.name}</div></div></div>
-        <div className="editor-section">
-          <h4>Çalışma modu</h4>
-          <div className="actions" style={{ marginTop: 0 }}>
-            <button className={`btn small ${state.deviceMode === 'pc' ? 'primary' : ''}`} onClick={() => setState({ ...state, deviceMode: 'pc' })}>PC</button>
-            <button className={`btn small ${state.deviceMode === 'mobile' ? 'primary' : ''}`} onClick={() => setState({ ...state, deviceMode: 'mobile' })}>Mobil</button>
-          </div>
-        </div>
-        <div className="editor-section">
-          <h4>Yapı araçları</h4>
-          <div className="asset-list">
-            <button className="asset-button" onClick={addBuilding}><strong>Bina oluştur</strong><span>Boş projeye ölçülendirilebilir bina ekler.</span></button>
-            <button className="asset-button" onClick={addGrid}><strong>Kolon / aks oluştur</strong><span>Satır ve aks bazlı kolon sistemi üretir.</span></button>
-          </div>
-        </div>
-        <div className="editor-section">
-          <h4>Envanter ekle</h4>
-          <div className="asset-list">
-            {assetPresets.map((preset) => (
-              <button key={preset.category} className="asset-button" onClick={() => addPreset(preset)}>
-                <strong>{preset.label}</strong><span>{preset.description}</span>
+    <div className="page-shell" style={{ minHeight: '100vh' }}>
+      <div className="panel-layout">
+        <aside className="sidebar">
+          <Link href="/panel">← Projelere dön</Link>
+          <a className="active">Proje kontrol merkezi</a>
+          <a>3D editör motoru</a>
+          <a>Envanter</a>
+          <a>AI işlem motoru</a>
+          <a>Raporlama</a>
+        </aside>
+
+        <main className="main">
+          <div className="toolbar">
+            <div>
+              <span className="eyebrow">Dijital Tesis / Proje Kontrol Merkezi</span>
+              <h1 style={{ fontSize: 34, marginTop: 12 }}>{state.name}</h1>
+              <p>
+                Bu ekran geçiş kontrol merkezidir. Eski demo kutu editörü kaldırıldı.
+                Bundan sonraki aşamada V19 referanslı gerçek 3D editör motoru bu merkeze bağlanacak.
+              </p>
+            </div>
+
+            <div className="actions" style={{ margin: 0 }}>
+              <Link className="btn" href="/panel">
+                Projeler
+              </Link>
+
+              <button className="btn primary" onClick={saveProjectNote}>
+                Kaydet
               </button>
-            ))}
-          </div>
-        </div>
-        <div className="editor-section">
-          <h4>Katmanlar</h4>
-          {state.layers.map((layer) => (
-            <div className="layer-row" key={layer.id}>
-              <span><span className="color-dot" style={{ background: layer.color || '#999' }} />{layer.name}</span>
-              <button className="btn small" onClick={() => toggleLayer(layer.id)}>{layer.visible ? 'Açık' : 'Kapalı'}</button>
-            </div>
-          ))}
-        </div>
-      </aside>
-
-      <main className="scene-wrap">
-        <div className="editor-header">
-          <div><div className="editor-title">Dijital tesis editörü</div><div className="editor-sub">Veritabanı tabanlı çalışma alanı · {state.deviceMode.toUpperCase()}</div></div>
-          <div className="actions" style={{ margin: 0 }}>
-            <button className="btn small" onClick={() => setState({ ...state, settings: { ...state.settings, showGrid: !state.settings.showGrid } })}>Grid</button>
-            <button className="btn primary small" onClick={() => save()} disabled={saving}>{saving ? 'Kaydediliyor' : 'Kaydet'}</button>
-          </div>
-        </div>
-        <div className="scene-canvas"><ThreeScene state={state} /></div>
-        {!state.buildings.length && !state.assets.length && !state.columnGrids.length && (
-          <div className="scene-empty">
-            <div className="empty-box">
-              <h2>Boş tesis projesi</h2>
-              <p>Bu proje sıfırdan başlar. Sol panelden bina, kolon sistemi veya envanter ekle. AI panelinden doğal dille işlem planı oluşturabilirsin.</p>
             </div>
           </div>
-        )}
-      </main>
 
-      <aside className="editor-right">
-        <div className="editor-header"><div><div className="editor-title">AI ve özellikler</div><div className="editor-sub">Onaylı işlem motoru</div></div></div>
-        <div className="editor-section">
-          <h4>AI asistan</h4>
-          <div className="ai-chat">
-            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Örn: 12 metre uzunluğunda makine ekle, raf alanı oluştur, B12 kolonuna levha yerleştir..." />
-            <button className="btn primary" onClick={askAi} disabled={aiBusy}>{aiBusy ? 'Plan hazırlanıyor...' : 'İşlem Planı Hazırla'}</button>
-            {plan && <div className="ai-plan"><strong>{plan.summary}</strong><ul>{plan.humanReadableSteps.map((s, i) => <li key={i}>{s}</li>)}</ul>{plan.warnings?.map((w, i) => <div className="notice warn" key={i} style={{ marginTop: 8 }}>{w}</div>)}<div className="actions"><button className="btn accent small" onClick={applyPlan}>Uygula ve kaydet</button><button className="btn small" onClick={() => setPlan(null)}>İptal</button></div></div>}
-            {message && <div className="notice">{message}</div>}
+          {message && (
+            <div className="notice" style={{ marginBottom: 18 }}>
+              {message}
+            </div>
+          )}
+
+          <div className="grid-3" style={{ marginBottom: 22 }}>
+            <div className="panel metric">
+              <strong>{buildingCount}</strong>
+              <span>Bina</span>
+            </div>
+
+            <div className="panel metric">
+              <strong>{gridCount}</strong>
+              <span>Kolon / aks sistemi</span>
+            </div>
+
+            <div className="panel metric">
+              <strong>{assetCount}</strong>
+              <span>Varlık / envanter</span>
+            </div>
           </div>
-        </div>
-        <div className="editor-section">
-          <h4>Varlıklar</h4>
-          {state.assets.map((asset) => (
-            <button key={asset.id} className="asset-button" style={{ width: '100%', marginBottom: 8, borderColor: selectedAsset === asset.id ? '#c78a1d' : undefined }} onClick={() => setSelectedAsset(asset.id)}>
-              <strong>{asset.name}</strong><span>{asset.category} · x:{asset.x} z:{asset.z}</span>
-            </button>
-          ))}
-          {!state.assets.length && <div className="notice">Henüz varlık yok.</div>}
-        </div>
-        {selected && <div className="editor-section">
-          <h4>Seçili varlık</h4>
-          <div className="form-grid">
-            <div><label>Ad</label><input value={selected.name} onChange={(e) => updateSelected({ name: e.target.value })} /></div>
-            <div><label>X</label><input type="number" value={selected.x} onChange={(e) => updateSelected({ x: Number(e.target.value) })} /></div>
-            <div><label>Z</label><input type="number" value={selected.z} onChange={(e) => updateSelected({ z: Number(e.target.value) })} /></div>
-            <div><label>Genişlik</label><input type="number" value={selected.width} onChange={(e) => updateSelected({ width: Number(e.target.value) })} /></div>
-            <button className="btn danger" onClick={deleteSelected}>Varlığı sil</button>
+
+          <div className="cards" style={{ marginBottom: 22 }}>
+            <section className="panel project-card">
+              <span className="badge">Proje verisi</span>
+              <h2 style={{ marginTop: 14 }}>Kurulum özeti</h2>
+
+              <p>
+                Bu proje veritabanında saklanır. Yeni HTML versiyonu oluşturulmaz.
+                Bina, kolon, katman, varlık ve AI işlem geçmişi proje verisi olarak yönetilir.
+              </p>
+
+              <div className="notice">
+                <b>Çalışma modu:</b> {state.deviceMode?.toUpperCase() || 'PC'}
+                <br />
+                <b>Katman sayısı:</b> {layerCount}
+                <br />
+                <b>Profesyonel sihirbaz:</b>{' '}
+                {(state.settings as any)?.professionalWizard ? 'Aktif' : 'Yok'}
+              </div>
+            </section>
+
+            <section className="panel project-card">
+              <span className="badge">Bina / aks</span>
+              <h2 style={{ marginTop: 14 }}>Tesis geometrisi</h2>
+
+              {firstBuilding ? (
+                <p>
+                  Başlangıç binası tanımlı. Ölçüler:
+                  <br />
+                  <b>{firstBuilding.width} m</b> genişlik ·{' '}
+                  <b>{firstBuilding.depth} m</b> uzunluk ·{' '}
+                  <b>{firstBuilding.height} m</b> yükseklik
+                </p>
+              ) : (
+                <p>
+                  Bu proje boş tesis olarak başlatılmış. Bina geometrisi henüz tanımlı değil.
+                </p>
+              )}
+
+              {firstGrid ? (
+                <div className="notice">
+                  <b>Aks:</b> {firstGrid.rows?.join(', ')}
+                  <br />
+                  <b>Kolon:</b> {firstGrid.columns} adet / satır
+                  <br />
+                  <b>Aralık:</b> {firstGrid.columnSpacing} m
+                </div>
+              ) : (
+                <div className="notice warn">
+                  Kolon / aks sistemi yok. AI’nin B12, C14 gibi hedefleri anlayabilmesi için
+                  aks sistemi kurulmalı.
+                </div>
+              )}
+            </section>
+
+            <section className="panel project-card">
+              <span className="badge">Legacy</span>
+              <h2 style={{ marginTop: 14 }}>SAMPA Vadi v19</h2>
+
+              <p>
+                Eski V19/Vadi dosyası şu an görüntüleme modunda bağlı.
+                Bu geçici bağlantı korunacak; sonraki aşamada V19 verisi yeni editör motoruna
+                parça parça aktarılacak.
+              </p>
+
+              <div className="actions">
+                <Link
+                  className="btn primary"
+                  href="/legacy/sampa-vadi-v19.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  V19 Legacy Viewer Aç
+                </Link>
+              </div>
+            </section>
           </div>
-        </div>}
-      </aside>
+
+          <section className="panel" style={{ padding: 24, marginBottom: 22 }}>
+            <span className="eyebrow">Aktif modüller</span>
+            <h2 style={{ marginTop: 12 }}>Proje modül durumu</h2>
+
+            <div className="cards" style={{ marginTop: 18 }}>
+              {[
+                ['Envanter yönetimi', modules.inventory],
+                ['İSG levha sistemi', modules.signs],
+                ['Yangın ekipman planı', modules.fire],
+                ['Ölçüm sistemi', modules.measurement],
+                ['AI işlem motoru', modules.ai],
+                ['Mobil görüntüleme', modules.mobile]
+              ].map(([label, active]) => (
+                <div
+                  key={String(label)}
+                  className="notice"
+                  style={{
+                    borderColor: active ? '#b7d9c5' : '#efcbc7',
+                    background: active ? '#f0fbf4' : '#fff4f2'
+                  }}
+                >
+                  <b>{label as string}</b>
+                  <br />
+                  {active ? 'Aktif' : 'Kapalı'}
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel" style={{ padding: 24, marginBottom: 22 }}>
+            <span className="eyebrow">AI işlem motoru</span>
+            <h2 style={{ marginTop: 12 }}>Komuttan işlem planına</h2>
+
+            <p>
+              AI burada kaynak kodu değiştirmez. Sadece proje verisine uygulanabilecek güvenli
+              işlem planı üretir. Uygulama aşaması bir sonraki geliştirme paketinde kontrollü
+              hale getirilecek.
+            </p>
+
+            <div className="form-grid" style={{ marginTop: 16 }}>
+              <div>
+                <label>Komut</label>
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Örn: B12 kolonuna forklift hız sınırı 10 km/h levhası ekle."
+                />
+              </div>
+
+              <div className="actions">
+                <button
+                  className="btn primary"
+                  onClick={askAi}
+                  disabled={aiBusy || !modules.ai}
+                >
+                  {aiBusy ? 'Plan hazırlanıyor...' : 'İşlem Planı Hazırla'}
+                </button>
+              </div>
+
+              {!modules.ai && (
+                <div className="notice warn">
+                  Bu projede AI modülü kapalı. Yeni proje sihirbazından AI modülü açık
+                  proje oluşturulmalı.
+                </div>
+              )}
+
+              {plan && (
+                <div className="panel" style={{ padding: 18 }}>
+                  <span className="badge">AI planı</span>
+                  <h3 style={{ marginTop: 12 }}>{plan.summary}</h3>
+
+                  <p>
+                    Güven skoru: <b>{Math.round((plan.confidence || 0) * 100)}%</b>
+                  </p>
+
+                  <ul>
+                    {plan.humanReadableSteps?.map((step, index) => (
+                      <li key={index}>{step}</li>
+                    ))}
+                  </ul>
+
+                  {plan.warnings?.map((warning, index) => (
+                    <div className="notice warn" key={index} style={{ marginTop: 8 }}>
+                      {warning}
+                    </div>
+                  ))}
+
+                  <div className="notice" style={{ marginTop: 12 }}>
+                    Bu aşamada plan sadece görüntülenir. Sonraki pakette “Onayla ve uygula”
+                    sistemi proje veritabanına güvenli şekilde bağlanacak.
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="panel" style={{ padding: 24 }}>
+            <span className="eyebrow">Sonraki geliştirme</span>
+            <h2 style={{ marginTop: 12 }}>Yeni 3D editör motoru</h2>
+
+            <p>
+              Bir sonraki adımda burada V19 referanslı gerçek 3D tesis editörü kurulacak.
+              Eski demo kutu sistemi kullanılmayacak. Yeni motor; bina, kolon/aks, katman,
+              seçili varlık, ölçüm ve levha yerleşimini ayrı modüller halinde yönetecek.
+            </p>
+
+            <div className="grid-3" style={{ marginTop: 18 }}>
+              <div className="notice">
+                <b>1. FacilityScene</b>
+                <br />
+                Tesis sahnesi ve kamera motoru.
+              </div>
+
+              <div className="notice">
+                <b>2. ColumnGridLayer</b>
+                <br />
+                A/B/C/D ve kolon numarası tabanlı koordinat sistemi.
+              </div>
+
+              <div className="notice">
+                <b>3. AssetPlacement</b>
+                <br />
+                Makine, raf, levha ve yangın ekipmanı yerleşimi.
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
     </div>
   );
 }
