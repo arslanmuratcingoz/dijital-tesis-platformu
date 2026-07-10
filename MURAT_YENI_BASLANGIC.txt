@@ -1,0 +1,20 @@
+Murat, bu paket eski projeyi düzeltmek için değil; sıfırdan temiz başlangıç içindir.
+
+ANA HEDEF:
+- Marka adı: Dijital Tesis
+- Eski SAMPA/Vadi site iskeleti kullanılmayacak.
+- Yeni kullanıcı boş projeyle başlar.
+- AI, HTML dosyasını değiştirmez; proje verisini değiştirir.
+- Her değişiklik yeni HTML versiyonu oluşturmaz.
+
+YAPILACAK:
+1. GitHub'da yeni repo aç: dijital-tesis-platformu
+2. Bu paketin içindeki dosyaları yükle.
+3. Supabase'te yeni proje aç.
+4. database/001_SUPABASE_SETUP.sql dosyasını çalıştır.
+5. Vercel'e yeni repoyu bağla.
+6. Environment Variables gir.
+7. Deploy et.
+
+ESKİ REPOYU KULLANMA:
+sampa-vadi-ai-web-pro eski demo olarak kalsın. Bu yeni sistem onun yerine geçecek.
